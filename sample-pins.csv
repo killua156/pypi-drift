@@ -1,0 +1,13 @@
+package,version
+# Old majors, so a demo run always has something to report.
+requests,1.2.3
+urllib3,1.26.18
+click,7.1.2
+flask,1.1.4
+
+# Major-stable projects pinned within their current major: OK rows.
+six,1.16.0
+python-dateutil,2.8.2
+
+# Not a real project: shows that one bad row never aborts the run.
+pypi-drift-no-such-package-xyz,1.0.0

@@ -1,0 +1,36 @@
+[project]
+name = "pypi-drift"
+# Single source of truth: src/pypi_drift/__init__.py, which also feeds USER_AGENT.
+dynamic = ["version"]
+description = "Report pinned Python dependencies that are at least one major version behind PyPI."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = [
+    "httpx>=0.24",
+    "packaging>=21.0",
+]
+
+[project.scripts]
+pypi-drift = "pypi_drift.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/pypi_drift/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pypi_drift"]
+# Ship the inline-type-hint marker so downstream mypy sees the annotations.
+artifacts = ["src/pypi_drift/py.typed"]
+
+[dependency-groups]
+dev = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Puts tests/helpers.py on the path under every --import-mode, not just prepend.
+pythonpath = ["tests"]
+addopts = "-q"
