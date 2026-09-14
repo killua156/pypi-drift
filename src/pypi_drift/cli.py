@@ -1,14 +1,14 @@
 """Command line entry point: arguments, rendering, exit codes.
 
-The only module that touches stdout or the process exit status. Everything it
-prints is assembled from :class:`~pypi_drift.models.Result` rows, so the table
-and the JSON document always report the same verdicts.
+The only module that touches stdout or the process exit status -- the web UI
+renders into a stream handed to it from here. Everything printed is assembled
+from :class:`~pypi_drift.models.Result` rows, so the table, the JSON document
+and the page always report the same verdicts.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import os
 import sys
@@ -17,7 +17,15 @@ from typing import List, Optional, Sequence, TextIO
 from . import __version__, pypi
 from .compare import evaluate, fetch_error_result, invalid_pin_result, parse_version
 from .csv_input import CsvInputError, read_pins
-from .models import STATUS_ERROR, STATUS_FLAGGED, Pin, Result, Summary
+from .models import (
+    STATUS_ERROR,
+    STATUS_FLAGGED,
+    Pin,
+    Result,
+    Summary,
+    build_document,
+    dump_document,
+)
 
 #: Every package is current (or the run was forced clean with --exit-zero).
 EXIT_OK = 0
@@ -34,6 +42,9 @@ MAX_WORKERS = 64
 
 _COLUMNS = ("STATUS", "PACKAGE", "PINNED", "LATEST", "MAJOR", "NOTE")
 
+#: The one word routed away from the CSV parser, before it sees a positional.
+SERVE_COMMAND = "serve"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -44,7 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Exit codes: 0 clean, 1 something flagged, 2 operational failure, "
-            "3 something could not be checked. Flagged wins when a run has both."
+            "3 something could not be checked. Flagged wins when a run has both. "
+            "Run 'pypi-drift serve' for the same check as a local web page."
         ),
     )
     parser.add_argument("csv", help="path to a CSV of package,pinned_version rows")
@@ -80,6 +92,39 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--version", action="version", version="pypi-drift {}".format(__version__))
+    return parser
+
+
+def build_serve_parser() -> argparse.ArgumentParser:
+    """Flags for ``pypi-drift serve``. Deliberately no host or bind option.
+
+    The web module is imported here rather than at module scope so a plain
+    ``pypi-drift pins.csv`` never pays for ``http.server``.
+    """
+    from .web import DEFAULT_PORT
+
+    parser = argparse.ArgumentParser(
+        prog="pypi-drift serve",
+        description=(
+            "Serve the drift checker as a local web page: paste a pin list in "
+            "the browser and get the same table back."
+        ),
+        epilog=(
+            "The server binds 127.0.0.1 only and is reachable from this machine "
+            "alone. Nothing is written to disk."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help="preferred port; the next free one is used if it is busy (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="do not open a browser window; just print the URL",
+    )
     return parser
 
 
@@ -171,15 +216,19 @@ def render_summary(summary: Summary, stream: TextIO) -> None:
 
 
 def render_json(results: Sequence[Result], summary: Summary, stream: TextIO) -> None:
-    document = dict(summary.to_dict())
-    document["results"] = [result.to_dict() for result in results]
-    json.dump(document, stream, indent=2, sort_keys=False)
-    stream.write("\n")
+    dump_document(build_document(summary, results), stream)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+
+    # `csv` is positional, so the existing parser would read a bare `serve` as a
+    # file path. Route it first; everything else parses exactly as it always has.
+    if raw and raw[0] == SERVE_COMMAND:
+        return _serve(raw[1:])
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
 
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be a finite number greater than 0")
@@ -196,6 +245,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except Exception as exc:  # never a traceback; always one line and exit 2
         sys.stderr.write("pypi-drift: {}: {}\n".format(exc.__class__.__name__, exc))
         return EXIT_ERROR
+
+
+def _serve(argv: Sequence[str]) -> int:
+    """Run ``pypi-drift serve``. Owns its own exit codes, like :func:`main`."""
+    parser = build_serve_parser()
+    args = parser.parse_args(argv)
+
+    if not 0 <= args.port <= 65535:
+        parser.error("--port must be between 0 and 65535")
+
+    from . import web
+
+    try:
+        web.serve(port=args.port, open_browser=not args.no_browser, stream=sys.stdout)
+    except KeyboardInterrupt:  # raised before serve_forever installs its own guard
+        return EXIT_OK
+    except BrokenPipeError:  # `pypi-drift serve | head`, same as the CSV path
+        return _exit_on_broken_pipe()
+    except OSError as exc:
+        sys.stderr.write("pypi-drift: {}\n".format(exc))
+        return EXIT_ERROR
+    except Exception as exc:  # never a traceback; always one line and exit 2
+        sys.stderr.write("pypi-drift: {}: {}\n".format(exc.__class__.__name__, exc))
+        return EXIT_ERROR
+    return EXIT_OK
 
 
 def _exit_on_broken_pipe() -> int:

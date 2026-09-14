@@ -8,6 +8,10 @@ It is strictly read-only: an HTTP `GET` on `https://pypi.org/pypi/{name}/json`
 and nothing else. It never installs, resolves, writes back to the CSV, or bumps
 a pin for you.
 
+Two ways in: `pypi-drift pins.csv` in a terminal, or [`pypi-drift serve`](#local-web-page)
+for a local page you paste a pin list into. Both run the same check and report
+the same verdicts.
+
 ## Install / run
 
 Install the `pypi-drift` command:
@@ -81,6 +85,7 @@ disappears from the report without explanation.
 
 ```
 pypi-drift CSV [--json] [--only-flagged] [--timeout SECONDS] [--workers N] [--exit-zero]
+pypi-drift serve [--port PORT] [--no-browser]
 ```
 
 | Option | Meaning |
@@ -90,6 +95,58 @@ pypi-drift CSV [--json] [--only-flagged] [--timeout SECONDS] [--workers N] [--ex
 | `--timeout` | Per-request timeout in seconds (default: 10) |
 | `--workers` | Maximum concurrent requests, 1-64 (default: 8) |
 | `--exit-zero` | Exit `0` even when packages are flagged or unchecked, for report-only use; operational failures (exit `2`) are unaffected |
+
+## Local web page
+
+`pypi-drift serve` starts a small server on your machine and opens a page where
+you paste a pin list -- or pick a `.csv` -- and get the same table back in the
+browser. Useful when the pins are in a chat message or a spreadsheet cell and
+making a file first is the only thing standing in your way.
+
+```sh
+pypi-drift serve                  # opens http://127.0.0.1:8765/ in your browser
+pypi-drift serve --port 9000      # start looking for a free port at 9000
+pypi-drift serve --no-browser     # just print the URL
+```
+
+| Option | Meaning |
+|---|---|
+| `--port` | Preferred port (default: 8765). If it is busy, the next free port is used and the URL printed says which. It tries 20 ports and then gives up rather than scanning the range |
+| `--no-browser` | Do not open a browser window |
+
+Stop it with Ctrl-C. There is no `--timeout` or `--workers` here: checks from the
+page always run with the defaults (10 seconds, 8 concurrent requests). Use the
+CLI when you need to tune them.
+
+`serve` is matched as the first word, so a file named exactly `serve` in the
+current directory is shadowed by the subcommand -- spell it `./serve` to check
+it. Any other path ending in `serve` is unaffected.
+
+**It is local only.** The server binds `127.0.0.1` and there is no flag to make
+it do otherwise -- it is not reachable from another machine, and a teammate who
+wants one runs their own copy. Nothing is written to disk: no history, no saved
+pin lists, no accounts. The page is one self-contained document served by the
+tool itself -- no build step, no CDN, no fonts or assets fetched from anywhere,
+and it is served under a `Content-Security-Policy` that stops the browser
+loading any, so that is enforced rather than merely promised. The only traffic
+leaving your machine is the same PyPI version lookups the CLI makes.
+
+The page is a thin shell over one endpoint, which you can use directly:
+
+```sh
+curl -sX POST http://127.0.0.1:8765/api/check \
+  -H 'Content-Type: application/json' \
+  -d '{"text": "requests,1.2.3\nflask,3.0.0"}'
+```
+
+`text` is the pasted pin list, in [the CSV format above](#csv-format). The
+response is byte-for-byte the document [`--json`](#json-output) prints for the
+same input -- one contract, so the page and the terminal can never disagree
+about a verdict. A request that cannot be answered at all (an empty list, a body
+that is not JSON) comes back as a non-200 with `{"error": "..."}` instead; every
+per-package problem is still an `error` row inside a normal 200 response. A
+request body over 4 MB is refused with `413` -- a pin list that large is a
+mistake, not a paste.
 
 ## JSON output
 
@@ -148,6 +205,12 @@ not read in CI as "all pins current".
 `--exit-zero` forces `0` regardless, for report-only use. It is the only
 opt-out; operational failures (`2`) are unaffected.
 
+Those codes describe a *check*. `pypi-drift serve` is a server, so only two of
+them apply: `0` when you stop it with Ctrl-C, and `2` when it cannot start at all
+(no free port, a `--port` out of range). It never exits `1` or `3` -- the
+verdicts it reports go to the browser, not to its exit status, so it is not a
+thing to gate CI on.
+
 So plain `pypi-drift pins.csv` is already enough to gate CI -- a non-zero exit
 means drift, an incomplete check, or a broken invocation. Parse `--json` only
 when you want to treat those cases differently from each other:
@@ -184,4 +247,8 @@ $ echo $?
 uv run pytest
 ```
 
-The suite stubs every PyPI response and makes no network calls.
+The suite stubs every PyPI response and makes no network calls. It does bind
+loopback sockets and make real HTTP requests to them, always on an
+OS-assigned port, to exercise `serve` against a running server -- so a sandbox
+that forbids `listen(2)` or connections to `127.0.0.1` will fail those tests
+even though nothing leaves the machine.

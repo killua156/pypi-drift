@@ -1,14 +1,18 @@
 """Shared vocabulary: the pin read from the CSV and the verdict reported for it.
 
 Keeping these two records in one place lets the CSV reader, the PyPI client, the
-comparison logic and the CLI stay decoupled -- none of them import each other's
-internals, they only agree on these shapes.
+comparison logic, the CLI and the web UI stay decoupled -- none of them import
+each other's internals, they only agree on these shapes.
+
+The report document itself lives here too, for the same reason: the terminal and
+the browser must not each assemble and serialize their own.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Sequence, TextIO
 
 #: A pin whose latest release is at least one major version ahead.
 STATUS_FLAGGED = "flagged"
@@ -91,3 +95,29 @@ class Summary:
             "ok": self.ok,
             "errors": self.errors,
         }
+
+
+def build_document(summary: "Summary", results: Iterable["Result"]) -> Dict[str, Any]:
+    """The whole report as one JSON-friendly object: the counts, then the rows.
+
+    ``summary`` always describes the whole run; ``results`` may be a filtered
+    view of it (that is what ``--only-flagged`` is).
+    """
+    document: Dict[str, Any] = dict(summary.to_dict())
+    document["results"] = [result.to_dict() for result in results]
+    return document
+
+
+def document_from_results(results: Sequence["Result"]) -> Dict[str, Any]:
+    """The unfiltered report for ``results``."""
+    return build_document(Summary.from_results(results), results)
+
+
+def dump_document(document: Any, stream: TextIO) -> None:
+    """Write a document as one JSON object and a newline, and nothing else.
+
+    Every surface serializes through here, so ``--json`` and the endpoint cannot
+    drift apart over a formatting option.
+    """
+    json.dump(document, stream, indent=2, sort_keys=False)
+    stream.write("\n")
