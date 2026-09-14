@@ -252,3 +252,9 @@ loopback sockets and make real HTTP requests to them, always on an
 OS-assigned port, to exercise `serve` against a running server -- so a sandbox
 that forbids `listen(2)` or connections to `127.0.0.1` will fail those tests
 even though nothing leaves the machine.
+
+That same command runs in CI on every push and every pull request
+(`.github/workflows/ci.yml`): Python 3.9 -- the floor `requires-python`
+declares -- and 3.14, on both Ubuntu and Windows, four jobs that all have to
+pass. The floor is checked by machine rather than by memory, so a 3.10-only
+idiom fails the build instead of reaching a user.

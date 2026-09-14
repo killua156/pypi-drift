@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same ref supersedes the first rather than queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Only the default read-only checkout credential; this workflow never writes to the repo.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      # Every combination reports its own result: a break that only shows up on the
+      # floor must not cancel the versions that would have passed.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # 3.9 is the floor declared by `requires-python` in pyproject.toml -- if that
+        # moves, this moves with it. 3.14 is the current latest. Windows is here
+        # deliberately: socket reuse and `os.stat` file types differ there.
+        python-version: ["3.9", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v10.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-suffix: py${{ matrix.python-version }}
+
+      # Exactly what a developer runs. The suite stubs PyPI and binds only
+      # loopback, so no outbound network is needed here.
+      - name: Run the test suite
+        run: uv run pytest
