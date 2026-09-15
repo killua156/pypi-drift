@@ -679,6 +679,23 @@ def test_the_port_fallback_gives_up_rather_than_scanning_forever(monkeypatch):
     assert "3 ports from 9999" in str(excinfo.value)
 
 
+def test_a_windows_style_bind_conflict_is_recognised_as_a_busy_port(monkeypatch):
+    """Windows reports a taken port as Winsock 10048, which CPython hands back
+    untranslated -- errno.EADDRINUSE never appears there, so matching only that
+    would re-raise instead of moving to the next port."""
+    attempted = []
+
+    def busy_once(address, handler):
+        attempted.append(address[1])
+        if len(attempted) == 1:
+            raise OSError(web.WSAEADDRINUSE, "Only one usage of each socket address")
+        return "bound"
+
+    monkeypatch.setattr(web, "DriftServer", busy_once)
+    assert web.create_server(port=9100) == "bound"
+    assert attempted == [9100, 9101], "10048 must mean busy, not fatal"
+
+
 def test_the_bind_failure_reports_the_ports_that_existed_not_the_ones_asked_for(
     monkeypatch,
 ):

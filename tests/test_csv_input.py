@@ -232,8 +232,12 @@ def test_a_fifo_with_a_writer_is_read_like_any_other_file(tmp_path):
 
 
 def test_a_character_device_is_read_not_refused():
-    """/dev/stdin and /dev/fd/N are character devices on some platforms."""
-    assert read_pins("/dev/null") == ([], [])
+    """/dev/stdin and /dev/fd/N are character devices on some platforms.
+
+    os.devnull rather than a literal: the same device is spelled "nul" on
+    Windows, and the point is the kind of file, not the path.
+    """
+    assert read_pins(os.devnull) == ([], [])
 
 
 @pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="AF_UNIX needed")

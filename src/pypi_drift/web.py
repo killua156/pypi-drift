@@ -15,6 +15,7 @@ from __future__ import annotations
 import errno
 import io
 import json
+import os
 import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,6 +32,11 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 #: How many consecutive ports to try before giving up.
 PORT_ATTEMPTS = 20
+#: What a taken port looks like on Windows. CPython returns Winsock codes
+#: untranslated unless they are one of the six it maps onto errno, and this is
+#: not one of them (PC/errmap.h), so a bind conflict there never arrives as
+#: errno.EADDRINUSE -- it arrives as 10048.
+WSAEADDRINUSE = 10048
 
 #: The page path. Everything else is a 404.
 PAGE_PATHS = frozenset({"/", "/index.html"})
@@ -88,6 +94,13 @@ def check_text(text: str) -> Dict[str, Any]:
 
 class DriftServer(ThreadingHTTPServer):
     """Threaded so a slow PyPI lookup cannot block the page from loading."""
+
+    #: SO_REUSEADDR does not mean the same thing on both platforms. On POSIX it
+    #: only allows rebinding a port left in TIME_WAIT, which is why HTTPServer
+    #: sets it; on Windows it lets a second socket bind a port another one is
+    #: actively listening on, which would hand two servers the same port and
+    #: leave the busy-port fallback below never firing.
+    allow_reuse_address = os.name != "nt"
 
 
 class DriftRequestHandler(BaseHTTPRequestHandler):
@@ -321,7 +334,7 @@ def create_server(port: int = DEFAULT_PORT, attempts: int = PORT_ATTEMPTS) -> Dr
         try:
             server = DriftServer((HOST, candidate), DriftRequestHandler)
         except OSError as exc:
-            if exc.errno not in (errno.EADDRINUSE, errno.EACCES):
+            if exc.errno not in (errno.EADDRINUSE, errno.EACCES, WSAEADDRINUSE):
                 raise
             last_error = exc
             continue
